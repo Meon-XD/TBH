@@ -83,6 +83,21 @@
             max-height: 300px;
             object-fit: contain;
             border-radius: 8px;
+            margin: 0 auto;
+            display: block;
+        }
+        .upload-progress {
+            height: 4px;
+            background-color: #e5e7eb;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 10px;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: #3b82f6;
+            width: 0%;
+            transition: width 0.3s ease;
         }
     </style>
 </head>
@@ -168,13 +183,16 @@
             <div class="drop-zone mb-6" id="drop-zone" ondragover="handleDragOver(event)" ondrop="handleDrop(event)" onclick="document.getElementById('file-input').click()">
                 <i class="fas fa-cloud-upload-alt text-4xl text-gray-400 mb-4"></i>
                 <p class="text-gray-600 mb-2">Klik atau tarik file ke sini untuk upload</p>
-                <p class="text-sm text-gray-500">Format yang didukung: JPG, PNG, GIF (Max 5MB)</p>
+                <p class="text-sm text-gray-500">Format yang didukung: JPG, PNG, GIF, WEBP (Max 10MB)</p>
             </div>
             
             <input type="file" id="file-input" accept="image/*" class="hidden" onchange="handleFileSelect(event)">
             
             <div class="mb-6 hidden" id="preview-container">
                 <img id="image-preview" class="image-preview w-full mb-4">
+                <div class="upload-progress hidden" id="upload-progress">
+                    <div class="progress-bar" id="progress-bar"></div>
+                </div>
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-2">Judul Foto</label>
@@ -244,11 +262,43 @@
     <script>
         let photos = JSON.parse(localStorage.getItem('gallery_photos')) || [];
         let currentEditId = null;
+        let currentFile = null;
 
         // Initialize the gallery
         function initGallery() {
             updateStats();
             renderGallery();
+            setupEventListeners();
+        }
+
+        // Setup event listeners
+        function setupEventListeners() {
+            // Prevent default drag behaviors
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                document.addEventListener(eventName, preventDefaults, false);
+            });
+
+            // Highlight drop zone when file is dragged over it
+            ['dragenter', 'dragover'].forEach(eventName => {
+                document.getElementById('drop-zone').addEventListener(eventName, highlight, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                document.getElementById('drop-zone').addEventListener(eventName, unhighlight, false);
+            });
+        }
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function highlight(e) {
+            document.getElementById('drop-zone').classList.add('dragover');
+        }
+
+        function unhighlight(e) {
+            document.getElementById('drop-zone').classList.remove('dragover');
         }
 
         // Update statistics
@@ -287,6 +337,9 @@
                                 </button>
                                 <button onclick="viewPhoto('${photo.id}')" class="w-10 h-10 bg-white rounded-full flex items-center justify-center hover:bg-green-50 text-green-600">
                                     <i class="fas fa-eye"></i>
+                                </button>
+                                <button onclick="downloadPhoto('${photo.id}')" class="w-10 h-10 bg-white rounded-full flex items-center justify-center hover:bg-purple-50 text-purple-600">
+                                    <i class="fas fa-download"></i>
                                 </button>
                             </div>
                         </div>
@@ -358,10 +411,12 @@
                 return;
             }
             
-            if (file.size > 5 * 1024 * 1024) {
-                showToast('Ukuran file maksimal 5MB', 'error');
+            if (file.size > 10 * 1024 * 1024) {
+                showToast('Ukuran file maksimal 10MB', 'error');
                 return;
             }
+            
+            currentFile = file;
             
             const reader = new FileReader();
             reader.onload = function(e) {
@@ -372,18 +427,35 @@
             reader.readAsDataURL(file);
         }
 
-        // Upload photo
+        // Upload photo with progress simulation
         function uploadPhoto() {
-            const fileInput = document.getElementById('file-input');
-            const title = document.getElementById('photo-title').value;
-            const description = document.getElementById('photo-description').value;
-            
-            if (!fileInput.files[0]) {
+            if (!currentFile) {
                 showToast('Pilih file gambar terlebih dahulu', 'error');
                 return;
             }
             
-            const file = fileInput.files[0];
+            const title = document.getElementById('photo-title').value;
+            const description = document.getElementById('photo-description').value;
+            
+            // Show progress bar
+            document.getElementById('upload-progress').classList.remove('hidden');
+            document.getElementById('upload-btn').disabled = true;
+            
+            // Simulate upload progress
+            let progress = 0;
+            const progressInterval = setInterval(() => {
+                progress += 10;
+                document.getElementById('progress-bar').style.width = progress + '%';
+                
+                if (progress >= 100) {
+                    clearInterval(progressInterval);
+                    completeUpload(title, description);
+                }
+            }, 50);
+        }
+
+        // Complete the upload process
+        function completeUpload(title, description) {
             const reader = new FileReader();
             
             reader.onload = function(e) {
@@ -392,8 +464,10 @@
                     url: e.target.result,
                     title: title,
                     description: description,
-                    size: file.size,
-                    uploadDate: new Date().toISOString()
+                    size: currentFile.size,
+                    uploadDate: new Date().toISOString(),
+                    filename: currentFile.name,
+                    type: currentFile.type
                 };
                 
                 photos.push(newPhoto);
@@ -403,9 +477,12 @@
                 
                 hideUploadModal();
                 showToast('Foto berhasil diupload!', 'success');
+                
+                // Reset for next upload
+                currentFile = null;
             };
             
-            reader.readAsDataURL(file);
+            reader.readAsDataURL(currentFile);
         }
 
         // Edit photo
@@ -458,13 +535,29 @@
             }
         }
 
+        // Download photo
+        function downloadPhoto(id) {
+            const photo = photos.find(p => p.id === id);
+            if (photo) {
+                const link = document.createElement('a');
+                link.href = photo.url;
+                link.download = photo.title || 'photo';
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            }
+        }
+
         // Reset upload form
         function resetUploadForm() {
             document.getElementById('file-input').value = '';
             document.getElementById('photo-title').value = '';
             document.getElementById('photo-description').value = '';
             document.getElementById('preview-container').classList.add('hidden');
+            document.getElementById('upload-progress').classList.add('hidden');
+            document.getElementById('progress-bar').style.width = '0%';
             document.getElementById('upload-btn').disabled = true;
+            currentFile = null;
         }
 
         // Save to localStorage
@@ -485,16 +578,6 @@
 
         // Initialize when page loads
         document.addEventListener('DOMContentLoaded', initGallery);
-
-        // Prevent default drag behaviors
-        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-            document.addEventListener(eventName, preventDefaults, false);
-        });
-
-        function preventDefaults(e) {
-            e.preventDefault();
-            e.stopPropagation();
-        }
     </script>
 </body>
 </html>
